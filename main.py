@@ -93,14 +93,7 @@ class FriendRequestHandlerPlugin(Star):
                  logger.error("[FriendRequestHandler] 找不到可用的聊天模型 provider")
                  return False
 
-            persona = await self.context.persona_manager.get_default_persona_v3(event.unified_msg_origin)
-            system_prompt = persona.get("prompt", "")
-
-            llm_resp = await self.context.llm_generate(
-                chat_provider_id=provider.meta().id,
-                prompt=prompt,
-                system_prompt=system_prompt
-            )
+            llm_resp = await provider.text_chat(prompt=prompt, session_id=f"friend_req_{user_id}")
             resp_text = llm_resp.completion_text.upper()
             logger.info(f"[FriendRequestHandler] 聊天模型返回：{resp_text}")
             if "APPROVE" in resp_text:
@@ -117,14 +110,9 @@ class FriendRequestHandlerPlugin(Star):
         question = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
 
         try:
-            persona = await self.context.persona_manager.get_default_persona_v3(event.unified_msg_origin)
-            system_prompt = persona.get("prompt", "")
-            state = {"messages": [{"role": "system", "content": system_prompt}]}
-
             # 使用内置的 decision 判定
             approve = await self.context.decision.yes_no(
                 question=question,
-                state=state,
                 provider_id=provider_id if provider_id else None,
                 threshold=0.5
             )

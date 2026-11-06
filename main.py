@@ -14,9 +14,9 @@ class FriendRequestHandlerPlugin(Star):
         super().__init__(context)
         self.config = config
 
-    @filter.event_message_type(filter.EventMessageType.OTHER_MESSAGE)
+    # Friend request events are wrapped as OTHER_MESSAGE / FRIEND_MESSAGE depending on internal router, so ALL covers it.
+    @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_other_message(self, event: AstrMessageEvent):
-        # 目前主要针对 OneBot/CQHTTP 的申请
         if event.get_platform_name() != "aiocqhttp":
             return
 

@@ -1,0 +1,46 @@
+{
+    "handling_mode": {
+        "description": "好友申请的处理方式",
+        "type": "string",
+        "options": ["auto_accept", "auto_reject", "llm_chat", "llm_decision"],
+        "labels": ["自动同意", "自动拒绝", "依人设自行决定 (聊天模型提示词)", "依人设自行决定 (结构化判断模型)"],
+        "subtitles": [
+            "收到任何好友申请都直接同意",
+            "收到任何好友申请都直接拒绝",
+            "向聊天模型发送提示词，由大模型分析通过/拒绝",
+            "使用系统判断模型能力，结构化回答是否同意"
+        ],
+        "default": "llm_chat"
+    },
+    "chat_provider": {
+        "description": "处理好友申请的聊天模型",
+        "hint": "当处理方式为“依人设自行决定 (聊天模型提示词)”时生效。留空则使用当前会话默认模型。",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "llm_prompt": {
+        "description": "传给 LLM 的提示词",
+        "hint": "可使用变量：{user_id} 申请人 QQ，{comment} 验证信息。要求模型明确输出 APPROVE 或 REJECT。",
+        "type": "text",
+        "default": "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。如果同意请回复 APPROVE，如果拒绝请回复 REJECT。仅回复这两个单词之一即可。"
+    },
+    "enable_forward": {
+        "description": "收到申请时是否转发通知",
+        "type": "bool",
+        "default": false
+    },
+    "forward_target_umo": {
+        "description": "转发对象 UMO",
+        "hint": "开启转发时，通知将会发送给此会话对象。",
+        "type": "string",
+        "default": "",
+        "_special": "umo"
+    },
+    "forward_template": {
+        "description": "转发消息文本格式",
+        "hint": "可使用变量：{user_id} 申请人，{comment} 验证信息，{result} 处理结果。",
+        "type": "string",
+        "default": "收到来自 {user_id} 的好友申请，验证消息为：{comment}。处理结果：{result}"
+    }
+}

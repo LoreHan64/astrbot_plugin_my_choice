@@ -1,24 +1,123 @@
+import asyncio
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+from astrbot.api.message_components import Plain
+from astrbot.api.event import MessageChain
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+from astrbot.core.provider.entities import ProviderType
+from astrbot.core.provider import Provider
 
-@register("helloworld", "YourName", "一个简单的 Hello World 插件", "1.0.0")
-class MyPlugin(Star):
-    def __init__(self, context: Context):
+@register("astrbot_plugin_friend_request_handler", "AstrBot", "一个可以自动处理好友申请的插件", "1.0.0")
+class FriendRequestHandlerPlugin(Star):
+    def __init__(self, context: Context, config: dict):
         super().__init__(context)
+        self.config = config
 
-    async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
+    @filter.event_message_type(filter.EventMessageType.OTHER_MESSAGE)
+    async def on_other_message(self, event: AstrMessageEvent):
+        # 目前主要针对 OneBot/CQHTTP 的申请
+        if event.get_platform_name() != "aiocqhttp":
+            return
 
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令""" # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str # 用户发的纯文本消息字符串
-        message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(f"Hello, {user_name}, 你发了 {message_str}!") # 发送一条纯文本消息
+        raw_message = event.message_obj.raw_message
+        if not isinstance(raw_message, dict):
+            return
 
-    async def terminate(self):
-        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        # 判断是否为好友申请事件
+        if raw_message.get("post_type") == "request" and raw_message.get("request_type") == "friend":
+            await self._handle_friend_request(event, raw_message)
+            event.stop_event()
+
+    async def _handle_friend_request(self, event: AstrMessageEvent, raw_message: dict):
+        flag = raw_message.get("flag")
+        comment = raw_message.get("comment", "")
+        user_id = str(raw_message.get("user_id", ""))
+
+        mode = self.config.get("handling_mode", "llm_chat")
+
+        logger.info(f"[FriendRequestHandler] 收到来自 {user_id} 的好友申请，验证消息：{comment}，处理模式：{mode}")
+
+        approve = False
+        result_text = "拒绝"
+
+        if mode == "auto_accept":
+            approve = True
+            result_text = "自动同意"
+        elif mode == "auto_reject":
+            approve = False
+            result_text = "自动拒绝"
+        elif mode == "llm_chat":
+            approve = await self._decide_by_llm_chat(user_id, comment, event)
+            result_text = "聊天模型判定为同意" if approve else "聊天模型判定为拒绝"
+        elif mode == "llm_decision":
+            approve = await self._decide_by_llm_decision(user_id, comment, event)
+            result_text = "判断模型判定为同意" if approve else "判断模型判定为拒绝"
+
+        # 执行操作
+        try:
+            if isinstance(event, AiocqhttpMessageEvent):
+                client = event.bot  # 因为 get_platform_name() == 'aiocqhttp'，直接获取 client 并下发。
+                await client.api.call_action("set_friend_add_request", flag=flag, approve=approve)
+                logger.info(f"[FriendRequestHandler] 已处理好友申请 (user_id={user_id})，结果：{approve}")
+        except Exception as e:
+            logger.error(f"[FriendRequestHandler] 处理好友申请失败: {e}")
+            result_text = f"处理失败 ({e})"
+
+        # 转发通知
+        if self.config.get("enable_forward", False):
+            target_umo = self.config.get("forward_target_umo", "")
+            if target_umo:
+                template = self.config.get("forward_template", "收到来自 {user_id} 的好友申请，验证消息为：{comment}。处理结果：{result}")
+                msg_text = template.replace("{user_id}", user_id).replace("{comment}", comment).replace("{result}", result_text)
+                try:
+                    chain = MessageChain([Plain(msg_text)])
+                    await self.context.send_message(target_umo, chain)
+                    logger.info(f"[FriendRequestHandler] 已发送转发通知给 {target_umo}")
+                except Exception as e:
+                    logger.error(f"[FriendRequestHandler] 转发通知失败: {e}")
+
+    async def _decide_by_llm_chat(self, user_id: str, comment: str, event: AstrMessageEvent) -> bool:
+        provider_id = self.config.get("chat_provider", "")
+
+        prompt_template = self.config.get("llm_prompt", "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。如果同意请回复 APPROVE，如果拒绝请回复 REJECT。仅回复这两个单词之一即可。")
+        prompt = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
+
+        try:
+            if provider_id:
+                provider = await self.context.provider_manager.get_provider_by_id(provider_id)
+            else:
+                provider = await self.context.get_using_provider_async(umo=event.unified_msg_origin)
+
+            if not isinstance(provider, Provider):
+                 logger.error("[FriendRequestHandler] 找不到可用的聊天模型 provider")
+                 return False
+
+            llm_resp = await self.context.llm_generate(
+                chat_provider_id=provider.meta().id,
+                prompt=prompt
+            )
+            resp_text = llm_resp.completion_text.upper()
+            logger.info(f"[FriendRequestHandler] 聊天模型返回：{resp_text}")
+            if "APPROVE" in resp_text:
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"[FriendRequestHandler] 请求聊天模型失败: {e}")
+            return False
+
+    async def _decide_by_llm_decision(self, user_id: str, comment: str, event: AstrMessageEvent) -> bool:
+        prompt_template = self.config.get("llm_prompt", "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。")
+        question = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
+
+        try:
+            # 使用内置的 decision 判定
+            approve = await self.context.decision.yes_no(
+                question=question,
+                threshold=0.5
+            )
+            logger.info(f"[FriendRequestHandler] 判断模型返回：{approve}")
+            return approve
+        except Exception as e:
+            logger.error(f"[FriendRequestHandler] 请求判断模型失败: {e}")
+            return False

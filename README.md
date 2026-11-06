@@ -1,14 +1,33 @@
-# astrbot-plugin-helloworld
+# friend_request_handler (自动好友申请处理)
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+这是一个为 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 编写的插件，允许您**自动处理收到的好友申请**。该插件支持将好友申请交由大模型（聊天模型或结构化判断模型）处理，依据您的人设来决定是否同意该申请。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+**声明：本插件由 AI 完全创作。**
 
-# Supports
+## 功能特点
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+* 支持多种处理模式：
+  * **自动同意**：无条件同意所有好友申请。
+  * **自动拒绝**：无条件拒绝所有好友申请。
+  * **依人设自行决定 (聊天模型提示词)**：将包含申请人 QQ 和验证消息的提示词发送给聊天模型，要求其分析并回复 `APPROVE` 或 `REJECT`，从而决定是否同意。
+  * **依人设自行决定 (结构化判断模型)**：将包含申请人 QQ 和验证消息的提示词发送给 AstrBot 全局内置的判断模型，返回 True (同意) 或 False (拒绝)。
+* 转发通知：支持在收到/处理完毕申请后，将消息转发给指定用户。
+
+## 配置项使用说明
+
+安装并启用插件后，在 AstrBot WebUI 的【插件设置】页面，您可以看到以下配置：
+
+1. **好友申请的处理方式**：选择自动同意、自动拒绝还是依据大模型判定。
+2. **处理好友申请的聊天模型**：如果您选择了“聊天模型提示词”模式，请在这里选择您想要用作裁决的大模型。留空则默认使用会话当前的默认聊天模型。
+3. **传给 LLM 的提示词**：支持修改传递给大模型的提示词。
+   - 可用变量：`{user_id}` (申请人)、`{comment}` (验证消息)。
+   - *提示*：在聊天模型模式下，请务必在提示词中指示模型仅回复 `APPROVE` 或 `REJECT`，以保证正确判定。
+4. **收到申请时是否转发通知**：是否开启消息转发。
+5. **转发对象 UMO**：支持通过选择器，指定负责接收通知对象的 UMO（如您个人的 QQ 私聊界面）。
+6. **转发消息文本格式**：可自定义转发给您的文本通知样式。
+   - 可用变量：`{user_id}`、`{comment}`、`{result}`。
+
+## 注意事项
+
+- 本插件默认只支持基于 CQHTTP 适配器 (OneBot v11) 的平台产生的好友申请（`request.friend`）。
+- 为了让模型能够结合“人设”进行判断，请在全局或会话中设定好该模型对应的人格提示词。

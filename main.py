@@ -8,15 +8,15 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import Aioc
 from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider import Provider
 
-@register("astrbot_plugin_friend_request_handler", "AstrBot", "一个可以自动处理好友申请的插件", "1.0.0")
+@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.0.0")
 class FriendRequestHandlerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.config = config
 
-    @filter.event_message_type(filter.EventMessageType.OTHER_MESSAGE)
+    # Friend request events are wrapped as OTHER_MESSAGE / FRIEND_MESSAGE depending on internal router, so ALL covers it.
+    @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_other_message(self, event: AstrMessageEvent):
-        # 目前主要针对 OneBot/CQHTTP 的申请
         if event.get_platform_name() != "aiocqhttp":
             return
 
@@ -56,19 +56,19 @@ class FriendRequestHandlerPlugin(Star):
 
         # 执行操作
         try:
-            if isinstance(event, AiocqhttpMessageEvent):
-                client = event.bot  # 因为 get_platform_name() == 'aiocqhttp'，直接获取 client 并下发。
-                await client.api.call_action("set_friend_add_request", flag=flag, approve=approve)
-                logger.info(f"[FriendRequestHandler] 已处理好友申请 (user_id={user_id})，结果：{approve}")
+            client = event.bot  # 因为 get_platform_name() == 'aiocqhttp'，直接获取 client 并下发。
+            await client.api.call_action("set_friend_add_request", flag=flag, approve=approve)
+            logger.info(f"[FriendRequestHandler] 已处理好友申请 (user_id={user_id})，结果：{approve}")
         except Exception as e:
             logger.error(f"[FriendRequestHandler] 处理好友申请失败: {e}")
             result_text = f"处理失败 ({e})"
 
         # 转发通知
-        if self.config.get("enable_forward", False):
-            target_umo = self.config.get("forward_target_umo", "")
+        fwd_settings = self.config.get("forward_settings", {})
+        if fwd_settings.get("enable_forward", False):
+            target_umo = fwd_settings.get("forward_target_umo", "")
             if target_umo:
-                template = self.config.get("forward_template", "收到来自 {user_id} 的好友申请，验证消息为：{comment}。处理结果：{result}")
+                template = fwd_settings.get("forward_template", "收到来自 {user_id} 的好友申请，验证消息为：{comment}。处理结果：{result}")
                 msg_text = template.replace("{user_id}", user_id).replace("{comment}", comment).replace("{result}", result_text)
                 try:
                     chain = MessageChain([Plain(msg_text)])
@@ -93,10 +93,7 @@ class FriendRequestHandlerPlugin(Star):
                  logger.error("[FriendRequestHandler] 找不到可用的聊天模型 provider")
                  return False
 
-            llm_resp = await self.context.llm_generate(
-                chat_provider_id=provider.meta().id,
-                prompt=prompt
-            )
+            llm_resp = await provider.text_chat(prompt=prompt, session_id=f"friend_req_{user_id}")
             resp_text = llm_resp.completion_text.upper()
             logger.info(f"[FriendRequestHandler] 聊天模型返回：{resp_text}")
             if "APPROVE" in resp_text:
@@ -107,6 +104,8 @@ class FriendRequestHandlerPlugin(Star):
             return False
 
     async def _decide_by_llm_decision(self, user_id: str, comment: str, event: AstrMessageEvent) -> bool:
+        provider_id = self.config.get("decision_provider", "")
+
         prompt_template = self.config.get("llm_prompt", "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。")
         question = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
 
@@ -114,6 +113,7 @@ class FriendRequestHandlerPlugin(Star):
             # 使用内置的 decision 判定
             approve = await self.context.decision.yes_no(
                 question=question,
+                provider_id=provider_id if provider_id else None,
                 threshold=0.5
             )
             logger.info(f"[FriendRequestHandler] 判断模型返回：{approve}")

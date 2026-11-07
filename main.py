@@ -8,7 +8,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import Aioc
 from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider import Provider
 
-@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.1.0")
+@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.1.1")
 class FriendRequestHandlerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)

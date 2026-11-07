@@ -1,4 +1,4 @@
-# astrbot_plugin_friend_request_handler (自动好友申请处理)
+# astrbot_plugin_my_choice (自动好友申请处理)
 
 这是一个为 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 编写的插件，允许您**自动处理收到的好友申请**。
 该插件支持将好友申请交由大模型（聊天模型或结构化判断模型）处理，依据您设定的人设来决定是否同意该申请。

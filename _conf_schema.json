@@ -26,6 +26,13 @@
         "default": "",
         "_special": "select_provider"
     },
+    "persona_id": {
+        "description": "处理好友申请的人设",
+        "hint": "选择大模型处理好友申请时所使用的人设。留空则使用当前会话生效的人设，或系统默认人设。",
+        "type": "string",
+        "default": "",
+        "_special": "select_persona"
+    },
     "llm_prompt": {
         "description": "传给 LLM 的提示词",
         "hint": "可使用变量：{user_id} 申请人 QQ，{comment} 验证信息。在聊天模型模式中要求明确输出 APPROVE 或 REJECT。",

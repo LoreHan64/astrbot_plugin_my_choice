@@ -8,7 +8,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import Aioc
 from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider import Provider
 
-@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.0.1")
+@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.0.2")
 class FriendRequestHandlerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -77,6 +77,25 @@ class FriendRequestHandlerPlugin(Star):
                 except Exception as e:
                     logger.error(f"[FriendRequestHandler] 转发通知失败: {e}")
 
+    async def _get_system_prompt(self, event: AstrMessageEvent) -> str:
+        persona_id = self.config.get("persona_id", "")
+        persona = None
+        try:
+            if persona_id:
+                persona = await self.context.persona_manager.get_persona_v3_by_id(persona_id)
+            else:
+                persona = await self.context.persona_manager.get_default_persona_v3(umo=event.unified_msg_origin)
+                if not persona:
+                    persona = await self.context.persona_manager.get_default_persona_v3(umo=None)
+        except Exception as e:
+            logger.error(f"[FriendRequestHandler] 获取人设失败: {e}")
+            try:
+                persona = await self.context.persona_manager.get_default_persona_v3(umo=None)
+            except Exception:
+                pass
+
+        return persona.get("prompt", "") if isinstance(persona, dict) else ""
+
     async def _decide_by_llm_chat(self, user_id: str, comment: str, event: AstrMessageEvent) -> bool:
         provider_id = self.config.get("chat_provider", "")
 
@@ -84,8 +103,7 @@ class FriendRequestHandlerPlugin(Star):
         prompt = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
 
         try:
-            persona = await self.context.persona_manager.get_default_persona_v3(umo=event.unified_msg_origin)
-            system_prompt = persona.get("prompt", "")
+            system_prompt = await self._get_system_prompt(event)
 
             if provider_id:
                 provider = await self.context.provider_manager.get_provider_by_id(provider_id)
@@ -119,8 +137,7 @@ class FriendRequestHandlerPlugin(Star):
         question = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
 
         try:
-            persona = await self.context.persona_manager.get_default_persona_v3(umo=event.unified_msg_origin)
-            system_prompt = persona.get("prompt", "")
+            system_prompt = await self._get_system_prompt(event)
 
             # 兼容：如果 state 尚未有效覆盖人设，也可以拼接到问题前：
             if system_prompt:

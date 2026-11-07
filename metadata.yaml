@@ -4,3 +4,6 @@ desc: 一个可以自动处理好友申请的插件，支持自动同意、自�
 version: v1.1.0
 author: LoreHan64
 repo: https://github.com/LoreHan64/astrbot_plugin_my_choice
+support_platforms:
+  - aiocqhttp
+astrbot_version: ">=4.0.0"

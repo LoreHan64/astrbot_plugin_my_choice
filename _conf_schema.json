@@ -2,26 +2,18 @@
     "handling_mode": {
         "description": "好友申请的处理方式",
         "type": "string",
-        "options": ["auto_accept", "auto_reject", "llm_chat", "llm_decision"],
-        "labels": ["自动同意", "自动拒绝", "依人设自行决定 (聊天模型提示词)", "依人设自行决定 (结构化判断模型)"],
+        "options": ["auto_accept", "auto_reject", "llm_chat"],
+        "labels": ["自动同意", "自动拒绝", "依人设自行决定 (聊天模型提示词)"],
         "subtitles": [
             "收到任何好友申请都直接同意",
             "收到任何好友申请都直接拒绝",
-            "向聊天模型发送提示词，由大模型分析通过/拒绝",
-            "使用系统判断模型能力，结构化回答是否同意"
+            "向聊天模型发送提示词，由大模型分析通过/拒绝"
         ],
         "default": "llm_chat"
     },
     "chat_provider": {
         "description": "处理好友申请的聊天模型",
         "hint": "当处理方式为“依人设自行决定 (聊天模型提示词)”时生效。留空则使用当前会话默认模型。",
-        "type": "string",
-        "default": "",
-        "_special": "select_provider"
-    },
-    "decision_provider": {
-        "description": "处理好友申请的判断模型",
-        "hint": "当处理方式为“依人设自行决定 (结构化判断模型)”时生效。留空则使用系统默认判断模型。",
         "type": "string",
         "default": "",
         "_special": "select_provider"

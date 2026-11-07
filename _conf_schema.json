@@ -35,9 +35,9 @@
     },
     "llm_prompt": {
         "description": "传给 LLM 的提示词",
-        "hint": "可使用变量：{user_id} 申请人 QQ，{comment} 验证信息。在聊天模型模式中要求明确输出 APPROVE 或 REJECT。",
+        "hint": "可使用变量：{user_id} 申请人 QQ，{comment} 验证信息。在聊天模型模式中，请要求模型输出 JSON 格式，包含 decision (APPROVE/REJECT) 和 reason (判定理由)。",
         "type": "text",
-        "default": "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。如果同意请回复 APPROVE，如果拒绝请回复 REJECT。仅回复这两个单词之一即可。"
+        "default": "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。\n请务必以 JSON 格式回复，不要包含其他无关内容。JSON 的格式如下：\n{\n  \"decision\": \"APPROVE\" 或 \"REJECT\",\n  \"reason\": \"你决定同意或拒绝的具体理由\"\n}"
     },
     "forward_settings": {
         "description": "消息转发",
@@ -58,9 +58,9 @@
             },
             "forward_template": {
                 "description": "转发消息文本格式",
-                "hint": "可使用变量：{user_id} 申请人，{comment} 验证信息，{result} 处理结果。",
+                "hint": "可使用变量：{user_id} 申请人，{comment} 验证信息，{result} 处理结果，{reason} 处理理由。",
                 "type": "string",
-                "default": "收到来自 {user_id} 的好友申请，验证消息为：{comment}。处理结果：{result}"
+                "default": "收到来自 {user_id} 的好友申请，验证消息为：{comment}。\n处理结果：{result}\n判定理由：{reason}"
             }
         }
     }

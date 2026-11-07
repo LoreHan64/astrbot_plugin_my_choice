@@ -40,6 +40,7 @@ class FriendRequestHandlerPlugin(Star):
 
         approve = False
         result_text = "拒绝"
+        reason = "不适用"
 
         if mode == "auto_accept":
             approve = True
@@ -48,7 +49,7 @@ class FriendRequestHandlerPlugin(Star):
             approve = False
             result_text = "自动拒绝"
         elif mode == "llm_chat":
-            approve = await self._decide_by_llm_chat(user_id, comment, event)
+            approve, reason = await self._decide_by_llm_chat(user_id, comment, event)
             result_text = "聊天模型判定为同意" if approve else "聊天模型判定为拒绝"
         elif mode == "llm_decision":
             approve = await self._decide_by_llm_decision(user_id, comment, event)
@@ -68,8 +69,8 @@ class FriendRequestHandlerPlugin(Star):
         if fwd_settings.get("enable_forward", False):
             target_umo = fwd_settings.get("forward_target_umo", "")
             if target_umo:
-                template = fwd_settings.get("forward_template", "收到来自 {user_id} 的好友申请，验证消息为：{comment}。处理结果：{result}")
-                msg_text = template.replace("{user_id}", user_id).replace("{comment}", comment).replace("{result}", result_text)
+                template = fwd_settings.get("forward_template", "收到来自 {user_id} 的好友申请，验证消息为：{comment}。\n处理结果：{result}\n判定理由：{reason}")
+                msg_text = template.replace("{user_id}", user_id).replace("{comment}", comment).replace("{result}", result_text).replace("{reason}", reason)
                 try:
                     chain = MessageChain([Plain(msg_text)])
                     await self.context.send_message(target_umo, chain)
@@ -96,10 +97,13 @@ class FriendRequestHandlerPlugin(Star):
 
         return persona.get("prompt", "") if isinstance(persona, dict) else ""
 
-    async def _decide_by_llm_chat(self, user_id: str, comment: str, event: AstrMessageEvent) -> bool:
+    async def _decide_by_llm_chat(self, user_id: str, comment: str, event: AstrMessageEvent) -> tuple[bool, str]:
+        import json
+        import re
+
         provider_id = self.config.get("chat_provider", "")
 
-        prompt_template = self.config.get("llm_prompt", "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。如果同意请回复 APPROVE，如果拒绝请回复 REJECT。仅回复这两个单词之一即可。")
+        prompt_template = self.config.get("llm_prompt", "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。\n请务必以 JSON 格式回复，不要包含其他无关内容。JSON 的格式如下：\n{\n  \"decision\": \"APPROVE\" 或 \"REJECT\",\n  \"reason\": \"你决定同意或拒绝的具体理由\"\n}")
         prompt = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
 
         try:
@@ -113,7 +117,7 @@ class FriendRequestHandlerPlugin(Star):
 
             if not chat_provider_id:
                  logger.error("[FriendRequestHandler] 找不到可用的聊天模型")
-                 return False
+                 return False, "获取模型失败"
 
             llm_resp = await self.context.llm_generate(
                 chat_provider_id=chat_provider_id,
@@ -121,14 +125,37 @@ class FriendRequestHandlerPlugin(Star):
                 system_prompt=system_prompt,
                 session_id=f"friend_req_{user_id}"
             )
-            resp_text = llm_resp.completion_text.upper()
+            resp_text = llm_resp.completion_text
             logger.info(f"[FriendRequestHandler] 聊天模型返回：{resp_text}")
-            if "APPROVE" in resp_text:
-                return True
-            return False
+
+            # 解析返回的JSON
+            decision = False
+            reason = "未知理由"
+            try:
+                # 尝试通过正则提取大括号中的内容以避免markdown backticks等影响
+                match = re.search(r'\{.*\}', resp_text, re.DOTALL)
+                if match:
+                    json_str = match.group(0)
+                else:
+                    json_str = resp_text
+
+                parsed_json = json.loads(json_str)
+                if "decision" in parsed_json:
+                    decision = "APPROVE" in str(parsed_json.get("decision", "")).upper()
+                else:
+                    # 容错：如果JSON没有 decision 字段，退化到文本匹配
+                    decision = "APPROVE" in resp_text.upper()
+
+                reason = parsed_json.get("reason", "模型未给出具体理由")
+            except Exception as json_e:
+                logger.error(f"[FriendRequestHandler] 解析聊天模型JSON失败: {json_e}")
+                decision = "APPROVE" in resp_text.upper()
+                reason = "无法解析模型返回的理由"
+
+            return decision, reason
         except Exception as e:
             logger.error(f"[FriendRequestHandler] 请求聊天模型失败: {e}")
-            return False
+            return False, f"请求模型失败: {e}"
 
     async def _decide_by_llm_decision(self, user_id: str, comment: str, event: AstrMessageEvent) -> bool:
         provider_id = self.config.get("decision_provider", "")

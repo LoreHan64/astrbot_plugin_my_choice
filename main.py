@@ -107,7 +107,7 @@ class FriendRequestHandlerPlugin(Star):
 
             if provider_id:
                 provider = await self.context.provider_manager.get_provider_by_id(provider_id)
-                chat_provider_id = provider.id if provider else None
+                chat_provider_id = provider_id if provider else None
             else:
                 chat_provider_id = await self.context.get_current_chat_provider_id(umo=event.unified_msg_origin)
 

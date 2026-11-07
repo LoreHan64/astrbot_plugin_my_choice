@@ -8,7 +8,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import Aioc
 from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider import Provider
 
-@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.0.2")
+@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.1.0")
 class FriendRequestHandlerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -51,9 +51,6 @@ class FriendRequestHandlerPlugin(Star):
         elif mode == "llm_chat":
             approve, reason = await self._decide_by_llm_chat(user_id, comment, event)
             result_text = "聊天模型判定为同意" if approve else "聊天模型判定为拒绝"
-        elif mode == "llm_decision":
-            approve = await self._decide_by_llm_decision(user_id, comment, event)
-            result_text = "判断模型判定为同意" if approve else "判断模型判定为拒绝"
 
         # 执行操作
         try:
@@ -156,28 +153,3 @@ class FriendRequestHandlerPlugin(Star):
         except Exception as e:
             logger.error(f"[FriendRequestHandler] 请求聊天模型失败: {e}")
             return False, f"请求模型失败: {e}"
-
-    async def _decide_by_llm_decision(self, user_id: str, comment: str, event: AstrMessageEvent) -> bool:
-        provider_id = self.config.get("decision_provider", "")
-
-        prompt_template = self.config.get("llm_prompt", "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。")
-        question = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
-
-        try:
-            system_prompt = await self._get_system_prompt(event)
-
-            # 兼容：如果 state 尚未有效覆盖人设，也可以拼接到问题前：
-            if system_prompt:
-                question = f"[系统人设/前提]: {system_prompt}\n\n[判断问题]: {question}"
-
-            # 使用内置的 decision 判定
-            approve = await self.context.decision.yes_no(
-                question=question,
-                provider_id=provider_id if provider_id else None,
-                threshold=0.5
-            )
-            logger.info(f"[FriendRequestHandler] 判断模型返回：{approve}")
-            return approve
-        except Exception as e:
-            logger.error(f"[FriendRequestHandler] 请求判断模型失败: {e}")
-            return False

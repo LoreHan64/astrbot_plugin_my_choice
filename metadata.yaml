@@ -1,6 +1,6 @@
 name: astrbot_plugin_my_choice
 display_name: Friend Request Handler
 desc: 一个可以自动处理好友申请的插件，支持自动同意、自动拒绝、由大模型判定等模式。
-version: v1.0.2
+version: v1.1.0
 author: LoreHan64
 repo: https://github.com/LoreHan64/astrbot_plugin_my_choice

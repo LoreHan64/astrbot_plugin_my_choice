@@ -84,16 +84,25 @@ class FriendRequestHandlerPlugin(Star):
         prompt = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
 
         try:
+            persona = await self.context.persona_manager.get_default_persona_v3(umo=event.unified_msg_origin)
+            system_prompt = persona.get("prompt", "")
+
             if provider_id:
                 provider = await self.context.provider_manager.get_provider_by_id(provider_id)
+                chat_provider_id = provider.id if provider else None
             else:
-                provider = await self.context.get_using_provider_async(umo=event.unified_msg_origin)
+                chat_provider_id = await self.context.get_current_chat_provider_id(umo=event.unified_msg_origin)
 
-            if not isinstance(provider, Provider):
-                 logger.error("[FriendRequestHandler] 找不到可用的聊天模型 provider")
+            if not chat_provider_id:
+                 logger.error("[FriendRequestHandler] 找不到可用的聊天模型")
                  return False
 
-            llm_resp = await provider.text_chat(prompt=prompt, session_id=f"friend_req_{user_id}")
+            llm_resp = await self.context.llm_generate(
+                chat_provider_id=chat_provider_id,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                session_id=f"friend_req_{user_id}"
+            )
             resp_text = llm_resp.completion_text.upper()
             logger.info(f"[FriendRequestHandler] 聊天模型返回：{resp_text}")
             if "APPROVE" in resp_text:
@@ -110,6 +119,13 @@ class FriendRequestHandlerPlugin(Star):
         question = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
 
         try:
+            persona = await self.context.persona_manager.get_default_persona_v3(umo=event.unified_msg_origin)
+            system_prompt = persona.get("prompt", "")
+
+            # 兼容：如果 state 尚未有效覆盖人设，也可以拼接到问题前：
+            if system_prompt:
+                question = f"[系统人设/前提]: {system_prompt}\n\n[判断问题]: {question}"
+
             # 使用内置的 decision 判定
             approve = await self.context.decision.yes_no(
                 question=question,

@@ -1,0 +1,81 @@
+name: Release Workflow
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: extract_version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+            echo "Version triggered by tag: $VERSION"
+          else
+            VERSION=$(grep 'version:' metadata.yaml | awk '{print $2}')
+            echo "Version extracted from metadata.yaml: $VERSION"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract Release Notes from CHANGELOG
+        id: extract_notes
+        run: |
+          VERSION="${{ env.VERSION }}"
+          echo "Extracting release notes for version $VERSION"
+
+          # Use python to extract notes between the target version header and the next header
+          cat << 'EOF' > extract.py
+          import sys
+          import re
+
+          version = sys.argv[1]
+          changelog_file = "CHANGELOG.md"
+
+          # Match ## [vX.Y.Z] optionally with date
+          pattern = r'^## \[' + re.escape(version) + r'\]'
+
+          with open(changelog_file, 'r', encoding='utf-8') as f:
+              lines = f.readlines()
+
+          in_section = False
+          notes = []
+          for line in lines:
+              if re.match(pattern, line):
+                  in_section = True
+                  continue
+              elif in_section and line.startswith('## ['):
+                  break
+
+              if in_section:
+                  notes.append(line)
+
+          # Output to file
+          with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as f:
+              f.write(''.join(notes).strip())
+          EOF
+
+          python3 extract.py "$VERSION"
+
+          echo "Extracted Notes:"
+          cat RELEASE_NOTES.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          body_path: RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

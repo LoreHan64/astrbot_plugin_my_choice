@@ -4,7 +4,7 @@ from astrbot.api import logger
 from astrbot.api.message_components import Plain
 from astrbot.api.event import MessageChain
 
-@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.1.2")
+@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.1.3")
 class FriendRequestHandlerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)

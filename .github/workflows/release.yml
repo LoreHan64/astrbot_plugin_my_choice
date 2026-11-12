@@ -23,7 +23,9 @@ jobs:
             VERSION=${GITHUB_REF#refs/tags/}
             echo "Version triggered by tag: $VERSION"
           else
-            VERSION=$(grep 'version:' metadata.yaml | awk '{print $2}')
+            # Only read the plugin's own `version:` key. A bare `grep 'version:'` also
+            # matches `astrbot_version:`, producing a two-line value that breaks the release tag.
+            VERSION=$(grep -m1 '^version:' metadata.yaml | awk '{print $2}')
             echo "Version extracted from metadata.yaml: $VERSION"
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV

@@ -1,12 +1,8 @@
-import asyncio
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 from astrbot.api.message_components import Plain
 from astrbot.api.event import MessageChain
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
-from astrbot.core.provider.entities import ProviderType
-from astrbot.core.provider import Provider
 
 @register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.1.2")
 class FriendRequestHandlerPlugin(Star):
@@ -31,8 +27,9 @@ class FriendRequestHandlerPlugin(Star):
 
     async def _handle_friend_request(self, event: AstrMessageEvent, raw_message: dict):
         flag = raw_message.get("flag")
-        comment = raw_message.get("comment", "")
-        user_id = str(raw_message.get("user_id", ""))
+        # OneBot 允许 comment / user_id 为 null，直接拿去做 str.replace / replace 会抛 TypeError。
+        comment = str(raw_message.get("comment") or "")
+        user_id = str(raw_message.get("user_id") or "")
 
         mode = self.config.get("handling_mode", "llm_chat")
 
@@ -54,20 +51,22 @@ class FriendRequestHandlerPlugin(Star):
 
         # 执行操作
         try:
+            if not flag:
+                raise ValueError("好友申请事件缺少 flag 字段，无法下发处理结果")
             client = event.bot  # 因为 get_platform_name() == 'aiocqhttp'，直接获取 client 并下发。
-            await client.api.call_action("set_friend_add_request", flag=flag, approve=approve)
+            await client.api.call_action("set_friend_add_request", flag=str(flag), approve=approve)
             logger.info(f"[FriendRequestHandler] 已处理好友申请 (user_id={user_id})，结果：{approve}")
         except Exception as e:
             logger.error(f"[FriendRequestHandler] 处理好友申请失败: {e}")
             result_text = f"处理失败 ({e})"
 
         # 转发通知
-        fwd_settings = self.config.get("forward_settings", {})
+        fwd_settings = self.config.get("forward_settings", {}) or {}
         if fwd_settings.get("enable_forward", False):
             target_umo = fwd_settings.get("forward_target_umo", "")
             if target_umo:
-                template = fwd_settings.get("forward_template", "收到来自 {user_id} 的好友申请，验证消息为：{comment}。\n处理结果：{result}\n判定理由：{reason}")
-                msg_text = template.replace("{user_id}", user_id).replace("{comment}", comment).replace("{result}", result_text).replace("{reason}", reason)
+                template = fwd_settings.get("forward_template") or "收到来自 {user_id} 的好友申请，验证消息为：{comment}。\n处理结果：{result}\n判定理由：{reason}"
+                msg_text = template.replace("{user_id}", user_id).replace("{comment}", comment).replace("{result}", result_text).replace("{reason}", str(reason))
                 try:
                     chain = MessageChain([Plain(msg_text)])
                     await self.context.send_message(target_umo, chain)
@@ -80,7 +79,9 @@ class FriendRequestHandlerPlugin(Star):
         persona = None
         try:
             if persona_id:
-                persona = await self.context.persona_manager.get_persona_v3_by_id(persona_id)
+                # get_persona_v3_by_id 是同步方法，不能 await，否则这里会抛 TypeError
+                # 并被下面的 except 吞掉，导致「处理好友申请的人设」配置永远不生效。
+                persona = self.context.persona_manager.get_persona_v3_by_id(persona_id)
             else:
                 persona = await self.context.persona_manager.get_default_persona_v3(umo=event.unified_msg_origin)
                 if not persona:
@@ -113,8 +114,8 @@ class FriendRequestHandlerPlugin(Star):
                 chat_provider_id = await self.context.get_current_chat_provider_id(umo=event.unified_msg_origin)
 
             if not chat_provider_id:
-                 logger.error("[FriendRequestHandler] 找不到可用的聊天模型")
-                 return False, "获取模型失败"
+                logger.error("[FriendRequestHandler] 找不到可用的聊天模型")
+                return False, "获取模型失败"
 
             llm_resp = await self.context.llm_generate(
                 chat_provider_id=chat_provider_id,
@@ -122,7 +123,7 @@ class FriendRequestHandlerPlugin(Star):
                 system_prompt=system_prompt,
                 session_id=f"friend_req_{user_id}"
             )
-            resp_text = llm_resp.completion_text
+            resp_text = llm_resp.completion_text or ""
             logger.info(f"[FriendRequestHandler] 聊天模型返回：{resp_text}")
 
             # 解析返回的JSON

@@ -1,10 +1,12 @@
-from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star, register
-from astrbot.api import logger
-from astrbot.api.message_components import Plain
-from astrbot.api.event import MessageChain
+import asyncio
 
-@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.1.3")
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import Node, Nodes, Plain
+from astrbot.api.star import Context, Star, register
+
+
+@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.2.0")
 class FriendRequestHandlerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -94,6 +96,213 @@ class FriendRequestHandlerPlugin(Star):
                 pass
 
         return persona.get("prompt", "") if isinstance(persona, dict) else ""
+
+    # ------------------------------------------------------------------
+    # 好友 / 群列表指令（仅管理员，默认仅私聊可用）
+    # ------------------------------------------------------------------
+
+    @filter.command("好友列表", alias={"friend_list"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def cmd_friend_list(self, event: AstrMessageEvent):
+        """以合并转发的方式展示 Bot 当前的好友列表。"""
+        await self._handle_list_command(
+            event,
+            title="好友列表",
+            unit="位好友",
+            action="get_friend_list",
+            formatter=self._format_friend_entry,
+            empty_text="当前没有好友。",
+        )
+
+    @filter.command("群列表", alias={"group_list"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def cmd_group_list(self, event: AstrMessageEvent):
+        """以合并转发的方式展示 Bot 当前所在的群列表。"""
+        await self._handle_list_command(
+            event,
+            title="群列表",
+            unit="个群聊",
+            action="get_group_list",
+            formatter=self._format_group_entry,
+            empty_text="当前没有加入任何群聊。",
+        )
+
+    def _list_config(self) -> dict:
+        cfg = self.config.get("list_commands") or {}
+        return cfg if isinstance(cfg, dict) else {}
+
+    def _get_onebot_client(self, event: AstrMessageEvent):
+        """获取 aiocqhttp 的 Bot 客户端实例，取不到则返回 None。"""
+        client = getattr(event, "bot", None)
+        if client is not None:
+            return client
+        try:
+            platform = self.context.get_platform_inst(event.get_platform_id())
+        except Exception as e:
+            logger.error(f"[FriendRequestHandler] 获取平台实例失败: {e}")
+            return None
+        return getattr(platform, "bot", None)
+
+    async def _call_onebot_api(self, event: AstrMessageEvent, action: str) -> object:
+        """调用 OneBot v11 API。兼容 aiocqhttp 的两种调用方式。"""
+        client = self._get_onebot_client(event)
+        if client is None:
+            raise RuntimeError("未找到 aiocqhttp 客户端实例")
+        api = getattr(client, "api", None)
+        if api is not None and hasattr(api, "call_action"):
+            return await api.call_action(action)
+        return await client.call_action(action)
+
+    async def _reply(self, event: AstrMessageEvent, text: str) -> None:
+        """发送一条纯文本回复，失败时只记录日志，不向用户抛出异常。"""
+        try:
+            await event.send(MessageChain([Plain(text)]))
+        except Exception as e:
+            logger.error(f"[FriendRequestHandler] 回复消息失败: {e}")
+
+    @staticmethod
+    def _to_id_text(value) -> str:
+        """把 OneBot 返回的 ID 安全地转成字符串。
+
+        这里不用 `value or ""`，否则 ID 为 0 这类假值会被误判为缺失。
+        """
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @classmethod
+    def _format_friend_entry(cls, item: dict) -> str | None:
+        user_id = cls._to_id_text(item.get("user_id"))
+        if not user_id:
+            return None
+        nickname = cls._to_id_text(item.get("nickname"))
+        remark = cls._to_id_text(item.get("remark"))
+        if remark and nickname and remark != nickname:
+            name = f"{nickname}（备注：{remark}）"
+        else:
+            name = remark or nickname or "未获取到昵称"
+        return f"{user_id} {name}"
+
+    @classmethod
+    def _format_group_entry(cls, item: dict) -> str | None:
+        group_id = cls._to_id_text(item.get("group_id"))
+        if not group_id:
+            return None
+        group_name = cls._to_id_text(item.get("group_name")) or "未获取到群名"
+        try:
+            member_count = int(item.get("member_count") or 0)
+        except (TypeError, ValueError):
+            member_count = 0
+        return f"{group_id} {group_name}（{member_count} 人）"
+
+    async def _handle_list_command(
+        self,
+        event: AstrMessageEvent,
+        *,
+        title: str,
+        unit: str,
+        action: str,
+        formatter,
+        empty_text: str,
+    ) -> None:
+        """通用的列表指令处理流程：校验 -> 拉取 -> 合并转发 -> 结束事件。"""
+        try:
+            cfg = self._list_config()
+
+            if not cfg.get("enable_list_commands", True):
+                await self._reply(event, "管理员已关闭列表查询功能。")
+                return
+
+            if event.get_platform_name() != "aiocqhttp":
+                await self._reply(event, "该指令仅支持 aiocqhttp (OneBot v11) 平台。")
+                return
+
+            if cfg.get("list_private_only", True) and not event.is_private_chat():
+                await self._reply(event, f"为避免泄露信息，{title}仅支持在私聊中使用，请私聊我后再发送指令。")
+                return
+
+            try:
+                raw = await asyncio.wait_for(self._call_onebot_api(event, action), timeout=60)
+            except Exception as e:
+                logger.error(f"[FriendRequestHandler] 调用 {action} 失败: {e}")
+                await self._reply(event, f"获取{title}失败：{e}")
+                return
+
+            if isinstance(raw, dict):
+                # 部分实现会把列表包在 data 字段里。
+                raw = raw.get("data") if isinstance(raw.get("data"), list) else None
+
+            if not isinstance(raw, list):
+                logger.error(f"[FriendRequestHandler] {action} 返回了非列表结果: {type(raw)}")
+                await self._reply(event, f"获取{title}失败：接口返回数据格式异常。")
+                return
+
+            lines: list[str] = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                line = formatter(item)
+                if line:
+                    lines.append(line)
+
+            if not lines:
+                await self._reply(event, empty_text)
+                return
+
+            total = len(lines)
+            max_entries = cfg.get("list_max_entries", 500)
+            truncated = False
+            try:
+                max_entries = int(max_entries)
+            except (TypeError, ValueError):
+                max_entries = 500
+            if max_entries > 0 and total > max_entries:
+                lines = lines[:max_entries]
+                truncated = True
+
+            try:
+                per_node = int(cfg.get("list_entries_per_node", 20))
+            except (TypeError, ValueError):
+                per_node = 20
+            per_node = max(1, min(per_node, 200))
+
+            uin, nickname = await self._get_bot_identity(event)
+            suffix = f"，仅显示前 {len(lines)} 条）" if truncated else "）"
+            header = f"{title}（共 {total} {unit}{suffix}"
+
+            nodes = [Node(content=[Plain(header)], name=nickname, uin=uin)]
+            for i in range(0, len(lines), per_node):
+                chunk = lines[i : i + per_node]
+                nodes.append(
+                    Node(content=[Plain("\n".join(chunk))], name=nickname, uin=uin)
+                )
+
+            try:
+                await event.send(MessageChain([Nodes(nodes)]))
+            except Exception as e:
+                logger.error(f"[FriendRequestHandler] 发送{title}合并转发失败: {e}")
+                fallback = "\n".join(lines[:50])
+                await self._reply(event, f"{header}\n{fallback}\n（合并转发发送失败，已降级为文本：{e}）")
+        except Exception as e:
+            logger.error(f"[FriendRequestHandler] 处理{title}指令异常: {e}")
+        finally:
+            # 指令类事件不应继续交给 LLM 处理。
+            event.stop_event()
+
+    async def _get_bot_identity(self, event: AstrMessageEvent) -> tuple[str, str]:
+        """获取合并转发节点使用的 QQ 号与昵称。"""
+        uin = str(event.get_self_id() or "0")
+        nickname = "Bot"
+        try:
+            info = await asyncio.wait_for(
+                self._call_onebot_api(event, "get_login_info"), timeout=15
+            )
+            if isinstance(info, dict):
+                uin = str(info.get("user_id") or uin)
+                nickname = str(info.get("nickname") or nickname)
+        except Exception as e:
+            logger.debug(f"[FriendRequestHandler] 获取 Bot 登录信息失败，使用默认值: {e}")
+        return uin, nickname
 
     async def _decide_by_llm_chat(self, user_id: str, comment: str, event: AstrMessageEvent) -> tuple[bool, str]:
         import json

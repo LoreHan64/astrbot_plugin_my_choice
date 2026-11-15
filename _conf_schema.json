@@ -55,5 +55,46 @@
                 "default": "收到来自 {user_id} 的好友申请，验证消息为：{comment}。\n处理结果：{result}\n判定理由：{reason}"
             }
         }
+    },
+    "list_commands": {
+        "description": "好友 / 群列表指令",
+        "hint": "配置 /好友列表 与 /群列表 指令（仅 AstrBot 管理员可用）的行为",
+        "type": "object",
+        "items": {
+            "enable_list_commands": {
+                "description": "启用列表查询指令",
+                "hint": "关闭后，管理员发送 /好友列表 或 /群列表 将不会返回任何列表。",
+                "type": "bool",
+                "default": true
+            },
+            "list_private_only": {
+                "description": "仅允许在私聊中使用",
+                "hint": "开启时，在群聊中发送列表指令只会提示「请私聊使用」，避免好友 QQ 号、群列表被群成员看到。",
+                "type": "bool",
+                "default": true
+            },
+            "list_max_entries": {
+                "description": "单次最多展示条数",
+                "hint": "超出时只展示前面的条目并提示总数。设为 0 表示不限制。",
+                "type": "int",
+                "default": 500,
+                "slider": {
+                    "min": 0,
+                    "max": 2000,
+                    "step": 50
+                }
+            },
+            "list_entries_per_node": {
+                "description": "每个转发节点包含的条数",
+                "hint": "列表会被切分为多个合并转发节点，每个节点最多容纳这么多条。",
+                "type": "int",
+                "default": 20,
+                "slider": {
+                    "min": 1,
+                    "max": 100,
+                    "step": 1
+                }
+            }
+        }
     }
 }

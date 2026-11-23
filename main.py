@@ -1,12 +1,47 @@
 import asyncio
+import json
+import re
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Node, Nodes, Plain
 from astrbot.api.star import Context, Star, register
 
+# 协议端（NapCat / LLOneBot / Lagrange）个别情况下会把 user_id 上报成 null 或空串，
+# 直接渲染会让通知里的 QQ 号变成空白，这里统一兜底成一个可读占位。
+UNKNOWN_USER_ID = "未知QQ号"
 
-@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.2.0")
+# 视为「没有有效 QQ 号」的取值（按小写比较），避免把 "None" / "null" 当成真实号码。
+_INVALID_USER_ID_VALUES = frozenset({"", "none", "null", "nil", "undefined", "0"})
+
+# 模板占位符：{user_id} / {comment} / {result} / {reason}
+_TEMPLATE_PLACEHOLDER = re.compile(r"\{(user_id|comment|result|reason)\}")
+
+
+def _normalize_user_id(value) -> str:
+    """把任意来源的 user_id 归一化成字符串，无效时返回空串。"""
+    if value is None or isinstance(value, bool):
+        return ""
+    text = str(value).strip()
+    if text.lower() in _INVALID_USER_ID_VALUES:
+        return ""
+    return text
+
+
+def _render_template(template: str, **values) -> str:
+    """单次替换模板占位符。
+
+    用一次 re.sub 而不是链式 str.replace，避免验证消息或判定理由里本身含有
+    ``{result}`` / ``{reason}`` 时被二次替换。
+    """
+
+    def _replace(match: re.Match) -> str:
+        return str(values.get(match.group(1), ""))
+
+    return _TEMPLATE_PLACEHOLDER.sub(_replace, template or "")
+
+
+@register("astrbot_plugin_my_choice", "AstrBot", "一个可以自动处理好友申请的插件", "1.2.1")
 class FriendRequestHandlerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -27,11 +62,57 @@ class FriendRequestHandlerPlugin(Star):
             await self._handle_friend_request(event, raw_message)
             event.stop_event()
 
+    def _resolve_user_id(self, raw_message: dict, event: AstrMessageEvent) -> str:
+        """按多来源顺序解析申请人 QQ 号，全部无效时返回空串。
+
+        aiocqhttp 适配器会用 ``MessageMember(user_id=str(event.user_id), ...)`` 构造 sender，
+        因此 sender 侧通常保存着同一份号码，可作为 raw_message 缺值时的回退来源。
+        """
+        candidates = []
+        if isinstance(raw_message, dict):
+            candidates.append(raw_message.get("user_id"))
+            raw_sender = raw_message.get("sender")
+            if isinstance(raw_sender, dict):
+                candidates.append(raw_sender.get("user_id"))
+
+        message_obj = getattr(event, "message_obj", None)
+        if message_obj is not None:
+            candidates.append(getattr(message_obj, "sender_id", None))
+            sender = getattr(message_obj, "sender", None)
+            candidates.append(getattr(sender, "user_id", None) if sender is not None else None)
+
+        get_sender_id = getattr(event, "get_sender_id", None)
+        if callable(get_sender_id):
+            try:
+                candidates.append(get_sender_id())
+            except Exception:
+                pass
+
+        for candidate in candidates:
+            user_id = _normalize_user_id(candidate)
+            if user_id:
+                return user_id
+        return ""
+
     async def _handle_friend_request(self, event: AstrMessageEvent, raw_message: dict):
         flag = raw_message.get("flag")
         # OneBot 允许 comment / user_id 为 null，直接拿去做 str.replace / replace 会抛 TypeError。
         comment = str(raw_message.get("comment") or "")
-        user_id = str(raw_message.get("user_id") or "")
+        user_id = self._resolve_user_id(raw_message, event)
+
+        if not user_id:
+            user_id = UNKNOWN_USER_ID
+            logger.warning(
+                "[FriendRequestHandler] 好友申请事件没有可用的 user_id（raw_message.user_id=%r，字段=%s），通知中将显示为「%s」。"
+                "通常是协议端（NapCat / LLOneBot / Lagrange）上报的请求本身缺少 user_id，可对照协议端日志排查。",
+                raw_message.get("user_id") if isinstance(raw_message, dict) else None,
+                sorted(raw_message.keys()) if isinstance(raw_message, dict) else type(raw_message).__name__,
+                UNKNOWN_USER_ID,
+            )
+        elif not _normalize_user_id(raw_message.get("user_id")):
+            logger.warning(
+                "[FriendRequestHandler] raw_message 中没有有效的 user_id，已回退解析为 %s。", user_id
+            )
 
         mode = self.config.get("handling_mode", "llm_chat")
 
@@ -68,7 +149,13 @@ class FriendRequestHandlerPlugin(Star):
             target_umo = fwd_settings.get("forward_target_umo", "")
             if target_umo:
                 template = fwd_settings.get("forward_template") or "收到来自 {user_id} 的好友申请，验证消息为：{comment}。\n处理结果：{result}\n判定理由：{reason}"
-                msg_text = template.replace("{user_id}", user_id).replace("{comment}", comment).replace("{result}", result_text).replace("{reason}", str(reason))
+                msg_text = _render_template(
+                    template,
+                    user_id=user_id,
+                    comment=comment,
+                    result=result_text,
+                    reason=reason,
+                )
                 try:
                     chain = MessageChain([Plain(msg_text)])
                     await self.context.send_message(target_umo, chain)
@@ -305,13 +392,10 @@ class FriendRequestHandlerPlugin(Star):
         return uin, nickname
 
     async def _decide_by_llm_chat(self, user_id: str, comment: str, event: AstrMessageEvent) -> tuple[bool, str]:
-        import json
-        import re
-
         provider_id = self.config.get("chat_provider", "")
 
         prompt_template = self.config.get("llm_prompt", "用户 {user_id} 申请添加你为好友，验证留言为：「{comment}」。请根据你的人设判断是否同意该好友申请。\n请务必以 JSON 格式回复，不要包含其他无关内容。JSON 的格式如下：\n{\n  \"decision\": \"APPROVE\" 或 \"REJECT\",\n  \"reason\": \"你决定同意或拒绝的具体理由\"\n}")
-        prompt = prompt_template.replace("{user_id}", user_id).replace("{comment}", comment)
+        prompt = _render_template(prompt_template, user_id=user_id, comment=comment)
 
         try:
             system_prompt = await self._get_system_prompt(event)

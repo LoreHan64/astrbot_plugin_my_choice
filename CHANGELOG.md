@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v1.2.1] - 2026-11-23
+
+### Fixed
+- 修复转发通知中申请人 QQ 号显示为空白的问题：`user_id` 现在会按 `raw_message.user_id` → `raw_message.sender.user_id` → `event.message_obj.sender.user_id` → `event.get_sender_id()` 的顺序回退解析，全部无效时显示为 `未知QQ号` 而不是留空。
+- 当 `user_id` 缺失或为 `null` / `"None"` / 空串时输出一条 WARNING，并打印 `raw_message` 的字段名，便于对照协议端（NapCat / LLOneBot / Lagrange）日志排查。
+- 转发通知模板与 LLM 提示词的变量替换改为单次 `re.sub`，避免验证消息或判定理由里本身含有 `{result}` / `{reason}` 等占位符时被二次替换。
+
 ## [v1.2.0] - 2026-11-15
 
 ### Added
